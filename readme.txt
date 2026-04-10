@@ -1,0 +1,67 @@
+=== JezPress Manager ===
+Contributors: jezpress
+Tags: jezpress, dashboard, plugin management, license management
+Requires at least: 6.0
+Tested up to: 6.7
+Requires PHP: 8.2
+Stable tag: 1.0.0
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+
+Central dashboard for managing all JezPress plugins, licenses, and support.
+
+== Description ==
+
+JezPress Manager provides a unified dashboard for all your JezPress plugins. Instead of navigating to different settings pages scattered throughout the WordPress admin, access all your JezPress plugins from one convenient location.
+
+= Features =
+
+* **Centralized Dashboard** - View all installed JezPress plugins in one place
+* **License Management** - Monitor license status for all your plugins at a glance
+* **Quick Support Access** - Easy access to documentation, support, and your account
+* **Clean Interface** - Modern, responsive design that integrates with WordPress admin
+
+= For Plugin Developers =
+
+Other JezPress plugins can register themselves with the manager using a simple API:
+
+`
+JezPress_Manager::register( array(
+    'slug'           => 'my-plugin-settings',
+    'name'           => 'My Plugin Name',
+    'version'        => '1.0.0',
+    'menu_title'     => 'My Plugin',
+    'capability'     => 'manage_options',
+    'callback'       => array( 'My_Plugin_Admin', 'render_settings' ),
+    'license_status' => 'active', // 'active', 'expired', 'invalid', or ''
+) );
+`
+
+== Installation ==
+
+1. Upload the `jezpress-manager` folder to the `/wp-content/plugins/` directory
+2. Activate the plugin through the 'Plugins' menu in WordPress
+3. Access the JezPress Manager from the admin menu
+
+== Frequently Asked Questions ==
+
+= Do I need this plugin? =
+
+If you use multiple JezPress plugins, this manager provides a convenient central location to access all of them. If you only use one JezPress plugin, it's optional but still provides a cleaner admin experience.
+
+= Will my plugins still work without this? =
+
+Yes. JezPress plugins are designed to work independently. The manager simply provides a unified interface.
+
+== Changelog ==
+
+= 1.0.0 =
+* Initial release
+* Central dashboard for JezPress plugins
+* License status display
+* Support and quick links section
+
+== Upgrade Notice ==
+
+= 1.0.0 =
+Initial release of JezPress Manager.
