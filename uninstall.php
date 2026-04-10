@@ -16,4 +16,7 @@ delete_option( 'jezpress_manager_version' );
 // Delete activation redirect transient (in case it exists during uninstall).
 delete_transient( 'jezpress_manager_activation_redirect' );
 
+// Delete update cache transient.
+delete_transient( 'jezpress_manager_update_info' );
+
 // Note: Registered plugins are stored in static memory only, no cleanup needed.

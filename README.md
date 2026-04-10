@@ -164,6 +164,10 @@ None currently.
 
 ## Changelog
 
+### 1.1.0
+- Added JezPress updater for automatic updates from updates.jezpress.com
+- Plugin now receives automatic updates through the JezPress platform
+
 ### 1.0.0
 - Initial release
 - Central dashboard for JezPress plugins

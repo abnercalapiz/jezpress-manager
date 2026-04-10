@@ -4,9 +4,40 @@
 
 **Plugin Name:** JezPress Manager
 **Slug:** `jezpress-manager`
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Type:** WordPress Admin Dashboard Plugin
 **Purpose:** Central dashboard for managing all JezPress plugins, licenses, and support
+**License Required:** No (free plugin, no license validation)
+
+## JezPress Platform Integration
+
+This plugin uses JezPress for automatic updates from updates.jezpress.com
+
+### Quick Reference
+
+| Service | URL |
+|---------|-----|
+| Update Server | https://updates.jezpress.com |
+| MCP Server | https://mcp.jezpress.com/mcp |
+| CLI | npm install -g @jezweb/jezpress-cli |
+
+### Commands
+
+```bash
+jezpress login                    # Authenticate with Google
+jezpress whoami                   # Check current user
+jezpress plugins list --mine      # List your plugins
+jezpress plugins get <slug>       # Plugin details
+jezpress plugins preflight <slug> <zip>  # Validate before upload
+jezpress plugins upload <slug> <zip>     # Upload new version
+```
+
+### Version Workflow
+
+1. Update Version in plugin header AND constant
+2. Create ZIP: `zip -r jezpress-manager.zip jezpress-manager -x "*.git*" -x "*CLAUDE.md" -x "*PLAN.md"`
+3. Validate: `jezpress plugins preflight jezpress-manager ./jezpress-manager.zip`
+4. Upload: `jezpress plugins upload jezpress-manager ./jezpress-manager.zip`
 
 ## Architecture
 
@@ -14,12 +45,13 @@
 
 ```
 jezpress-manager/
-├── jezpress-manager.php           # Main plugin bootstrap
+├── jezpress-manager.php                    # Main plugin bootstrap
 ├── includes/
-│   └── class-jezpress-manager.php # Core singleton class
-├── readme.txt                     # WordPress.org readme
-├── README.md                      # GitHub documentation
-└── CLAUDE.md                      # This file
+│   ├── class-jezpress-manager.php          # Core singleton class
+│   └── class-jezpress-manager-updater.php  # JezPress updater class
+├── readme.txt                              # WordPress.org readme
+├── README.md                               # GitHub documentation
+└── CLAUDE.md                               # This file
 ```
 
 ### Design Pattern
@@ -195,6 +227,77 @@ Add to the quick links section in `render_dashboard()`:
 
 - None (standalone plugin)
 - Optional: Other JezPress plugins that register with it
+
+## ZIP Structure (Critical)
+
+```
+jezpress-manager.zip
+└── jezpress-manager/                       ← Folder MUST match slug
+    ├── jezpress-manager.php                ← Main file MUST be slug.php
+    ├── includes/
+    │   ├── class-jezpress-manager.php
+    │   └── class-jezpress-manager-updater.php
+    ├── readme.txt
+    ├── README.md
+    └── uninstall.php
+```
+
+## Google Chat Notifications
+
+When asked to "send release to Google Chat" or "notify Google Chat about release", use this webhook:
+
+```
+https://chat.googleapis.com/v1/spaces/AAAAKOHCsJ4/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=3UggH2zwGHV_GWT-AueML6OHLsqF7iLRAnyOh6EAXSo
+```
+
+### How to Send Release Notification
+
+1. Extract changelog for the version from `readme.txt`
+2. Send a POST request with a formatted card:
+
+```bash
+curl -X POST "WEBHOOK_URL" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cardsV2": [{
+      "cardId": "release-VERSION",
+      "card": {
+        "header": {
+          "title": "JezPress Manager",
+          "subtitle": "Version VERSION Released"
+        },
+        "sections": [{
+          "header": "What'\''s New",
+          "widgets": [{
+            "textParagraph": {
+              "text": "CHANGELOG_CONTENT"
+            }
+          }]
+        }, {
+          "widgets": [{
+            "buttonList": {
+              "buttons": [{
+                "text": "View Plugin",
+                "onClick": {
+                  "openLink": {
+                    "url": "https://admin.jezpress.com/dashboard/plugins/jezpress-manager"
+                  }
+                }
+              }, {
+                "text": "Download Latest",
+                "onClick": {
+                  "openLink": {
+                    "url": "https://admin.jezpress.com/api/update-server/plugins/jezpress-manager/download?version=VERSION"
+                  }
+                }
+              }]
+            }
+          }]
+        }]
+      }
+    }]
+  }'
+```
 
 ## Hooks Reference
 
