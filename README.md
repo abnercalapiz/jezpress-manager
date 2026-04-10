@@ -177,6 +177,4 @@ GPL-2.0+ - See [LICENSE](https://www.gnu.org/licenses/gpl-2.0.html) for details.
 
 ## Support
 
-- **Email:** support@jezpress.com.au
-- **Documentation:** [jezpress.com.au/docs](https://jezpress.com.au/docs)
-- **My Account:** [jezpress.com.au/my-account](https://jezpress.com.au/my-account)
+- **Email:** jez@jezpress.com
