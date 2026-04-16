@@ -88,7 +88,7 @@ class JezPress_Manager_Updater {
 		}
 
 		$response = wp_remote_get(
-			$this->update_server . '/api/update-server/plugins/' . $this->plugin_slug . '/info',
+			$this->update_server . '/api/v1/info?plugin=' . rawurlencode( $this->plugin_slug ),
 			array(
 				'timeout' => 10,
 				'headers' => array(
@@ -104,9 +104,14 @@ class JezPress_Manager_Updater {
 		$body = wp_remote_retrieve_body( $response );
 		$data = json_decode( $body );
 
-		if ( empty( $data ) ) {
+		if ( empty( $data ) || empty( $data->success ) ) {
 			return false;
 		}
+
+		// Map API response fields to expected WordPress format.
+		$data->requires     = isset( $data->requires_wp ) ? $data->requires_wp : '';
+		$data->tested       = isset( $data->tested_wp ) ? $data->tested_wp : '';
+		$data->download_url = $this->update_server . '/api/v1/download?plugin=' . rawurlencode( $this->plugin_slug ) . '&version=' . rawurlencode( $data->version );
 
 		set_transient( $transient_key, $data, 12 * HOUR_IN_SECONDS );
 
