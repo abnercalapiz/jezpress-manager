@@ -55,7 +55,7 @@ class JezPress_Manager_Updater {
 		$this->plugin_slug = plugin_basename( dirname( $plugin_file ) );
 
 		add_filter( 'plugins_api', array( $this, 'plugin_info' ), 20, 3 );
-		add_filter( 'site_transient_update_plugins', array( $this, 'check_for_update' ) );
+		add_filter( 'pre_set_site_transient_update_plugins', array( $this, 'check_for_update' ) );
 		add_action( 'upgrader_process_complete', array( $this, 'clear_cache' ), 10, 2 );
 	}
 
@@ -139,6 +139,7 @@ class JezPress_Manager_Updater {
 		$plugin_file = plugin_basename( $this->plugin_file );
 
 		if ( version_compare( $remote_info->version, $plugin_data['Version'], '>' ) ) {
+			// Update available.
 			$transient->response[ $plugin_file ] = (object) array(
 				'slug'         => $this->plugin_slug,
 				'plugin'       => $plugin_file,
@@ -150,6 +151,16 @@ class JezPress_Manager_Updater {
 				'tested'       => isset( $remote_info->tested ) ? $remote_info->tested : '',
 				'requires'     => isset( $remote_info->requires ) ? $remote_info->requires : '',
 				'requires_php' => isset( $remote_info->requires_php ) ? $remote_info->requires_php : '',
+			);
+		} else {
+			// Up to date — register in no_update so WordPress shows "Enable auto-updates" link.
+			$transient->no_update[ $plugin_file ] = (object) array(
+				'id'          => $plugin_file,
+				'slug'        => $this->plugin_slug,
+				'plugin'      => $plugin_file,
+				'new_version' => $plugin_data['Version'],
+				'url'         => '',
+				'package'     => '',
 			);
 		}
 
