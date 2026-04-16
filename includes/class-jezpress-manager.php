@@ -63,6 +63,7 @@ class JezPress_Manager {
 		add_action( 'admin_menu', array( $this, 'add_admin_menu' ), 9 );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_styles' ) );
 		add_action( 'admin_init', array( $this, 'maybe_redirect_to_dashboard' ) );
+		add_action( 'wp_ajax_jezpress_manager_toggle_plugin', array( $this, 'ajax_toggle_plugin' ) );
 	}
 
 	/**
@@ -177,6 +178,143 @@ class JezPress_Manager {
 	}
 
 	/**
+	 * Detect inactive JezPress plugins installed on the site
+	 *
+	 * Scans all installed plugins for JezPress-related plugins that are
+	 * not currently active (i.e. not registered via self::$plugins).
+	 * Detection uses multiple signals:
+	 * - Custom header "JezPress Plugin: true"
+	 * - Plugin folder name starting with "jezpress-"
+	 * - Text domain containing "jezpress"
+	 * - Author being "Jezweb"
+	 *
+	 * @return array Array of inactive JezPress plugin data, keyed by plugin basename.
+	 */
+	private function detect_inactive_jezpress_plugins() {
+		if ( ! function_exists( 'get_plugins' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		$all_plugins     = get_plugins();
+		$active_plugins  = (array) get_option( 'active_plugins', array() );
+		$inactive        = array();
+
+		// Build a set of plugin basenames that correspond to registered (active) JezPress plugins.
+		// A registered plugin's slug matches the folder/file portion of its basename.
+		$registered_slugs = array_keys( self::$plugins );
+
+		foreach ( $all_plugins as $basename => $headers ) {
+			// Only inspect plugins that are NOT currently WordPress-active.
+			if ( in_array( $basename, $active_plugins, true ) ) {
+				continue;
+			}
+
+			// Extract the folder name (first segment of the basename).
+			$folder = strstr( $basename, '/', true );
+			if ( false === $folder ) {
+				// Single-file plugin in the plugins root; use filename without extension.
+				$folder = basename( $basename, '.php' );
+			}
+
+			// Check whether this is a JezPress plugin via multiple signals.
+			$is_jezpress = false;
+
+			// 1. Explicit opt-in header: "JezPress Plugin: true".
+			if ( ! empty( $headers['JezPress Plugin'] ) && 'true' === strtolower( trim( $headers['JezPress Plugin'] ) ) ) {
+				$is_jezpress = true;
+			}
+
+			// 2. Folder name starts with "jezpress-".
+			if ( ! $is_jezpress && 0 === stripos( $folder, 'jezpress-' ) ) {
+				$is_jezpress = true;
+			}
+
+			// 3. Text domain contains "jezpress".
+			if ( ! $is_jezpress && ! empty( $headers['TextDomain'] ) && false !== stripos( $headers['TextDomain'], 'jezpress' ) ) {
+				$is_jezpress = true;
+			}
+
+			// 4. Author is "Jezweb" (case-insensitive).
+			if ( ! $is_jezpress && ! empty( $headers['Author'] ) && false !== stripos( $headers['Author'], 'jezweb' ) ) {
+				$is_jezpress = true;
+			}
+
+			if ( ! $is_jezpress ) {
+				continue;
+			}
+
+			// Skip if this plugin's slug is already registered as active.
+			$derived_slug = sanitize_key( $folder );
+			if ( in_array( $derived_slug, $registered_slugs, true ) ) {
+				continue;
+			}
+
+			$inactive[ $basename ] = array(
+				'slug'        => $derived_slug,
+				'name'        => ! empty( $headers['Name'] ) ? sanitize_text_field( $headers['Name'] ) : sanitize_text_field( $folder ),
+				'version'     => ! empty( $headers['Version'] ) ? sanitize_text_field( $headers['Version'] ) : '',
+				'description' => ! empty( $headers['Description'] ) ? sanitize_text_field( wp_strip_all_tags( $headers['Description'] ) ) : '',
+				'plugin_file' => $basename,
+				'active'      => false,
+			);
+		}
+
+		return $inactive;
+	}
+
+	/**
+	 * AJAX handler: activate or deactivate a JezPress plugin
+	 *
+	 * Expects POST fields:
+	 *   - nonce       : jezpress_toggle_nonce
+	 *   - plugin_file : plugin basename (e.g. jezpress-foo/jezpress-foo.php)
+	 *   - action      : "activate" or "deactivate"
+	 *
+	 * @return void Outputs JSON and exits.
+	 */
+	public function ajax_toggle_plugin() {
+		// Verify nonce.
+		if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( sanitize_key( $_POST['nonce'] ), 'jezpress_toggle_nonce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Security check failed.', 'jezpress-manager' ) ), 403 );
+		}
+
+		// Verify capability.
+		if ( ! current_user_can( 'activate_plugins' ) ) {
+			wp_send_json_error( array( 'message' => __( 'You do not have permission to manage plugins.', 'jezpress-manager' ) ), 403 );
+		}
+
+		$plugin_file    = isset( $_POST['plugin_file'] ) ? sanitize_text_field( wp_unslash( $_POST['plugin_file'] ) ) : '';
+		$toggle_action  = isset( $_POST['toggle_action'] ) ? sanitize_key( $_POST['toggle_action'] ) : '';
+
+		if ( empty( $plugin_file ) || ! in_array( $toggle_action, array( 'activate', 'deactivate' ), true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Invalid request parameters.', 'jezpress-manager' ) ), 400 );
+		}
+
+		if ( ! function_exists( 'activate_plugin' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		// Validate that the plugin file actually exists in the plugins directory.
+		$plugin_path = WP_PLUGIN_DIR . '/' . $plugin_file;
+		if ( ! file_exists( $plugin_path ) ) {
+			wp_send_json_error( array( 'message' => __( 'Plugin file not found.', 'jezpress-manager' ) ), 404 );
+		}
+
+		if ( 'activate' === $toggle_action ) {
+			$result = activate_plugin( $plugin_file );
+
+			if ( is_wp_error( $result ) ) {
+				wp_send_json_error( array( 'message' => $result->get_error_message() ), 500 );
+			}
+
+			wp_send_json_success( array( 'message' => __( 'Plugin activated successfully.', 'jezpress-manager' ) ) );
+		} else {
+			deactivate_plugins( $plugin_file );
+			wp_send_json_success( array( 'message' => __( 'Plugin deactivated successfully.', 'jezpress-manager' ) ) );
+		}
+	}
+
+	/**
 	 * Add admin menu and submenus
 	 */
 	public function add_admin_menu() {
@@ -234,38 +372,48 @@ class JezPress_Manager {
 	 * Render the dashboard page
 	 */
 	public function render_dashboard() {
-		$plugins = self::get_sorted_plugins();
+		$active_plugins   = self::get_sorted_plugins();
+		$inactive_plugins = $this->detect_inactive_jezpress_plugins();
+
+		// Total count: active (registered) + inactive (detected).
+		$total_count = count( $active_plugins ) + count( $inactive_plugins );
+
+		// Nonce for AJAX toggle calls.
+		$toggle_nonce = wp_create_nonce( 'jezpress_toggle_nonce' );
 		?>
 		<div class="wrap jezpress-manager-wrap">
 			<h1><?php esc_html_e( 'JezPress Manager', 'jezpress-manager' ); ?></h1>
+
+			<div id="jezpress-toggle-notice" class="jezpress-toggle-notice" style="display:none;" aria-live="polite"></div>
 
 			<div class="jezpress-dashboard-grid">
 				<!-- Plugins List Card -->
 				<div class="jezpress-card jezpress-card-plugins">
 					<div class="jezpress-card-header">
 						<h2><?php esc_html_e( 'Installed Plugins', 'jezpress-manager' ); ?></h2>
-						<span class="jezpress-plugin-count"><?php echo esc_html( count( $plugins ) ); ?></span>
+						<span class="jezpress-plugin-count"><?php echo esc_html( $total_count ); ?></span>
 					</div>
 					<div class="jezpress-card-body">
-						<?php if ( empty( $plugins ) ) : ?>
+						<?php if ( 0 === $total_count ) : ?>
 							<div class="jezpress-empty-state">
 								<span class="dashicons dashicons-admin-plugins"></span>
-								<p><?php esc_html_e( 'No JezPress plugins registered yet.', 'jezpress-manager' ); ?></p>
-								<p class="description"><?php esc_html_e( 'Install and activate JezPress plugins to see them here.', 'jezpress-manager' ); ?></p>
+								<p><?php esc_html_e( 'No JezPress plugins found.', 'jezpress-manager' ); ?></p>
+								<p class="description"><?php esc_html_e( 'Install JezPress plugins to see them here.', 'jezpress-manager' ); ?></p>
 							</div>
 						<?php else : ?>
 							<table class="wp-list-table widefat fixed striped">
 								<thead>
 									<tr>
 										<th class="column-plugin"><?php esc_html_e( 'Plugin', 'jezpress-manager' ); ?></th>
+										<th class="column-status"><?php esc_html_e( 'Status', 'jezpress-manager' ); ?></th>
 										<th class="column-version"><?php esc_html_e( 'Version', 'jezpress-manager' ); ?></th>
 										<th class="column-license"><?php esc_html_e( 'License', 'jezpress-manager' ); ?></th>
 										<th class="column-actions"><?php esc_html_e( 'Actions', 'jezpress-manager' ); ?></th>
 									</tr>
 								</thead>
 								<tbody>
-									<?php foreach ( $plugins as $slug => $plugin ) : ?>
-										<tr>
+									<?php foreach ( $active_plugins as $slug => $plugin ) : ?>
+										<tr class="jezpress-plugin-row jezpress-plugin-active">
 											<td class="column-plugin">
 												<div class="jezpress-plugin-name">
 													<?php if ( ! empty( $plugin['icon'] ) ) : ?>
@@ -276,6 +424,20 @@ class JezPress_Manager {
 												<?php if ( ! empty( $plugin['description'] ) ) : ?>
 													<p class="description"><?php echo esc_html( $plugin['description'] ); ?></p>
 												<?php endif; ?>
+											</td>
+											<td class="column-status">
+												<label class="jezpress-toggle" title="<?php esc_attr_e( 'Deactivate plugin', 'jezpress-manager' ); ?>">
+													<input
+														type="checkbox"
+														checked
+														data-plugin-file="<?php echo esc_attr( $slug . '/' . $slug . '.php' ); ?>"
+														data-plugin-name="<?php echo esc_attr( $plugin['name'] ); ?>"
+														data-nonce="<?php echo esc_attr( $toggle_nonce ); ?>"
+														class="jezpress-toggle-input"
+													>
+													<span class="jezpress-toggle-slider"></span>
+												</label>
+												<span class="jezpress-status-text jezpress-status-active"><?php esc_html_e( 'Active', 'jezpress-manager' ); ?></span>
 											</td>
 											<td class="column-version">
 												<code><?php echo esc_html( $plugin['version'] ); ?></code>
@@ -289,6 +451,46 @@ class JezPress_Manager {
 														<?php esc_html_e( 'Settings', 'jezpress-manager' ); ?>
 													</a>
 												<?php endif; ?>
+											</td>
+										</tr>
+									<?php endforeach; ?>
+
+									<?php foreach ( $inactive_plugins as $basename => $plugin ) : ?>
+										<tr class="jezpress-plugin-row jezpress-plugin-inactive" data-plugin-file="<?php echo esc_attr( $basename ); ?>">
+											<td class="column-plugin">
+												<div class="jezpress-plugin-name">
+													<span class="dashicons dashicons-admin-plugins jezpress-plugin-icon jezpress-plugin-icon-inactive"></span>
+													<strong><?php echo esc_html( $plugin['name'] ); ?></strong>
+												</div>
+												<?php if ( ! empty( $plugin['description'] ) ) : ?>
+													<p class="description"><?php echo esc_html( $plugin['description'] ); ?></p>
+												<?php endif; ?>
+											</td>
+											<td class="column-status">
+												<label class="jezpress-toggle" title="<?php esc_attr_e( 'Activate plugin', 'jezpress-manager' ); ?>">
+													<input
+														type="checkbox"
+														data-plugin-file="<?php echo esc_attr( $basename ); ?>"
+														data-plugin-name="<?php echo esc_attr( $plugin['name'] ); ?>"
+														data-nonce="<?php echo esc_attr( $toggle_nonce ); ?>"
+														class="jezpress-toggle-input"
+													>
+													<span class="jezpress-toggle-slider"></span>
+												</label>
+												<span class="jezpress-status-text jezpress-status-inactive"><?php esc_html_e( 'Inactive', 'jezpress-manager' ); ?></span>
+											</td>
+											<td class="column-version">
+												<?php if ( ! empty( $plugin['version'] ) ) : ?>
+													<code><?php echo esc_html( $plugin['version'] ); ?></code>
+												<?php else : ?>
+													<span class="jezpress-na">&mdash;</span>
+												<?php endif; ?>
+											</td>
+											<td class="column-license">
+												<span class="jezpress-badge jezpress-badge-none"><?php esc_html_e( 'N/A', 'jezpress-manager' ); ?></span>
+											</td>
+											<td class="column-actions">
+												&mdash;
 											</td>
 										</tr>
 									<?php endforeach; ?>
@@ -394,6 +596,140 @@ class JezPress_Manager {
 				</p>
 			</div>
 		</div>
+		<?php
+		$this->render_toggle_script( $toggle_nonce );
+	}
+
+	/**
+	 * Output the inline JavaScript for plugin toggle switches
+	 *
+	 * @param string $nonce The toggle nonce value.
+	 * @return void
+	 */
+	private function render_toggle_script( $nonce ) {
+		?>
+		<script type="text/javascript">
+		( function() {
+			'use strict';
+
+			var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+
+			/**
+			 * Show a brief notice in the dashboard notice area.
+			 *
+			 * @param {string}  message  The message to display.
+			 * @param {boolean} isError  If true, display as an error notice.
+			 */
+			function showNotice( message, isError ) {
+				var notice = document.getElementById( 'jezpress-toggle-notice' );
+				if ( ! notice ) {
+					return;
+				}
+
+				notice.className = 'jezpress-toggle-notice ' + ( isError ? 'jezpress-notice-error' : 'jezpress-notice-success' );
+				notice.textContent = message;
+				notice.style.display = 'block';
+
+				clearTimeout( notice._hideTimer );
+				notice._hideTimer = setTimeout( function() {
+					notice.style.display = 'none';
+				}, 4000 );
+			}
+
+			/**
+			 * Handle toggle switch change event.
+			 *
+			 * @param {Event} event The change event.
+			 */
+			function onToggleChange( event ) {
+				var checkbox    = event.target;
+				var pluginFile  = checkbox.getAttribute( 'data-plugin-file' );
+				var pluginName  = checkbox.getAttribute( 'data-plugin-name' );
+				var nonce       = checkbox.getAttribute( 'data-nonce' );
+				var isChecked   = checkbox.checked;
+				var action      = isChecked ? 'activate' : 'deactivate';
+				var row         = checkbox.closest( '.jezpress-plugin-row' );
+				var statusText  = row ? row.querySelector( '.jezpress-status-text' ) : null;
+
+				// Disable toggle during the request.
+				checkbox.disabled = true;
+
+				var body = new URLSearchParams();
+				body.append( 'action', 'jezpress_manager_toggle_plugin' );
+				body.append( 'toggle_action', action );
+				body.append( 'plugin_file', pluginFile );
+				body.append( 'nonce', nonce );
+
+				fetch( ajaxUrl, {
+					method:      'POST',
+					credentials: 'same-origin',
+					headers: {
+						'Content-Type': 'application/x-www-form-urlencoded'
+					},
+					body: body.toString()
+				} )
+				.then( function( response ) {
+					return response.json();
+				} )
+				.then( function( data ) {
+					if ( data.success ) {
+						// Update row appearance.
+						if ( row ) {
+							if ( isChecked ) {
+								row.classList.remove( 'jezpress-plugin-inactive' );
+								row.classList.add( 'jezpress-plugin-active' );
+							} else {
+								row.classList.remove( 'jezpress-plugin-active' );
+								row.classList.add( 'jezpress-plugin-inactive' );
+							}
+						}
+
+						// Update status text.
+						if ( statusText ) {
+							if ( isChecked ) {
+								statusText.textContent = <?php echo wp_json_encode( __( 'Active', 'jezpress-manager' ) ); ?>;
+								statusText.className = 'jezpress-status-text jezpress-status-active';
+							} else {
+								statusText.textContent = <?php echo wp_json_encode( __( 'Inactive', 'jezpress-manager' ) ); ?>;
+								statusText.className = 'jezpress-status-text jezpress-status-inactive';
+							}
+						}
+
+						showNotice(
+							( isChecked
+								? <?php echo wp_json_encode( __( 'Plugin activated:', 'jezpress-manager' ) ); ?>
+								: <?php echo wp_json_encode( __( 'Plugin deactivated:', 'jezpress-manager' ) ); ?> )
+							+ ' ' + pluginName,
+							false
+						);
+					} else {
+						// Revert toggle on error.
+						checkbox.checked = ! isChecked;
+						var errorMessage = ( data.data && data.data.message )
+							? data.data.message
+							: <?php echo wp_json_encode( __( 'An error occurred. Please try again.', 'jezpress-manager' ) ); ?>;
+						showNotice( errorMessage, true );
+					}
+				} )
+				.catch( function() {
+					// Revert toggle on network error.
+					checkbox.checked = ! isChecked;
+					showNotice( <?php echo wp_json_encode( __( 'Network error. Please try again.', 'jezpress-manager' ) ); ?>, true );
+				} )
+				.finally( function() {
+					checkbox.disabled = false;
+				} );
+			}
+
+			// Attach event listeners to all toggle inputs after DOM is ready.
+			document.addEventListener( 'DOMContentLoaded', function() {
+				var toggles = document.querySelectorAll( '.jezpress-toggle-input' );
+				for ( var i = 0; i < toggles.length; i++ ) {
+					toggles[ i ].addEventListener( 'change', onToggleChange );
+				}
+			} );
+		}() );
+		</script>
 		<?php
 	}
 
@@ -687,6 +1023,10 @@ class JezPress_Manager {
 			.jezpress-footer a {
 				color: #646970;
 			}
+			.column-status {
+				width: 110px;
+				white-space: nowrap;
+			}
 			.column-version {
 				width: 80px;
 			}
@@ -707,6 +1047,106 @@ class JezPress_Manager {
 				width: 18px;
 				height: 18px;
 			}
+			.jezpress-plugin-icon-inactive {
+				color: #c3c4c7;
+			}
+
+			/* Inactive row: slight fade */
+			.jezpress-plugin-inactive {
+				opacity: 0.7;
+			}
+
+			/* Status text labels */
+			.jezpress-status-text {
+				display: inline-block;
+				font-size: 11px;
+				font-weight: 600;
+				margin-left: 6px;
+				vertical-align: middle;
+			}
+			.jezpress-status-active {
+				color: #0a3622;
+			}
+			.jezpress-status-inactive {
+				color: #646970;
+			}
+
+			/* CSS-only toggle switch */
+			.jezpress-toggle {
+				position: relative;
+				display: inline-block;
+				width: 36px;
+				height: 20px;
+				vertical-align: middle;
+				cursor: pointer;
+				margin: 0;
+			}
+			.jezpress-toggle input {
+				opacity: 0;
+				width: 0;
+				height: 0;
+				position: absolute;
+			}
+			.jezpress-toggle-slider {
+				position: absolute;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				background-color: #c3c4c7;
+				border-radius: 20px;
+				transition: background-color 0.2s ease;
+			}
+			.jezpress-toggle-slider::before {
+				content: "";
+				position: absolute;
+				height: 14px;
+				width: 14px;
+				left: 3px;
+				bottom: 3px;
+				background-color: #fff;
+				border-radius: 50%;
+				transition: transform 0.2s ease;
+				box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+			}
+			.jezpress-toggle input:checked + .jezpress-toggle-slider {
+				background-color: #14b8a6;
+			}
+			.jezpress-toggle input:checked + .jezpress-toggle-slider::before {
+				transform: translateX(16px);
+			}
+			.jezpress-toggle input:focus-visible + .jezpress-toggle-slider {
+				outline: 2px solid #2271b1;
+				outline-offset: 2px;
+			}
+			.jezpress-toggle input:disabled + .jezpress-toggle-slider {
+				opacity: 0.5;
+				cursor: not-allowed;
+			}
+
+			/* Inline notice banner */
+			.jezpress-toggle-notice {
+				padding: 10px 15px;
+				border-radius: 3px;
+				margin-bottom: 15px;
+				font-size: 13px;
+				border-left: 4px solid transparent;
+			}
+			.jezpress-notice-success {
+				background: #d4edda;
+				color: #0a3622;
+				border-left-color: #14b8a6;
+			}
+			.jezpress-notice-error {
+				background: #f8d7da;
+				color: #58151c;
+				border-left-color: #d63638;
+			}
+
+			.jezpress-na {
+				color: #646970;
+			}
+
 			@media screen and (max-width: 960px) {
 				.jezpress-dashboard-grid {
 					grid-template-columns: 1fr;
