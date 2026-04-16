@@ -4,7 +4,7 @@ Tags: jezpress, dashboard, plugin management, license management
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 8.2
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -55,6 +55,12 @@ Yes. JezPress plugins are designed to work independently. The manager simply pro
 
 == Changelog ==
 
+= 1.1.1 =
+* Detect inactive JezPress plugins and show them in the dashboard alongside active ones
+* Add a Status column with a CSS toggle switch to activate/deactivate plugins directly from the Manager dashboard
+* AJAX-powered toggle — no page reload needed
+* Security audit completed - no vulnerabilities found
+
 = 1.1.0 =
 * Added JezPress updater for automatic updates from updates.jezpress.com
 * Plugin now receives automatic updates through the JezPress platform
@@ -66,6 +72,9 @@ Yes. JezPress plugins are designed to work independently. The manager simply pro
 * Support and quick links section
 
 == Upgrade Notice ==
+
+= 1.1.1 =
+Detect inactive JezPress plugins and toggle activation directly from the dashboard.
 
 = 1.1.0 =
 Added automatic updates from the JezPress platform.
